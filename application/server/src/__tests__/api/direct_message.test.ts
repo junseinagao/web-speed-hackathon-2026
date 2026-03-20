@@ -2,7 +2,12 @@ import { describe, test, expect } from "bun:test";
 
 import { app } from "../app";
 import { setupApiTestFile } from "../setup_utils";
-import { signupAndGetCookie, requestWithSession } from "../helpers";
+import {
+  observeWebSocket,
+  requestWithSession,
+  signupAndGetCookie,
+  waitForWebSocketOpen,
+} from "../helpers";
 
 setupApiTestFile();
 
@@ -92,6 +97,67 @@ describe("GET /api/v1/dm/:id", () => {
       headers: { Cookie: cookie },
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("WebSocket /api/v1/dm/unread", () => {
+  test("emits unread counts for the authenticated user", async () => {
+    const { cookie1, cookie2, conversation } = await createConversation();
+
+    const socket = app.connectWebSocket("/api/v1/dm/unread", cookie2);
+    const ws = observeWebSocket<{
+      type: string;
+      payload: { unreadCount: number };
+    }>(socket);
+    await waitForWebSocketOpen(socket);
+
+    const initialMessage = await ws.nextMessage();
+    expect(initialMessage.type).toBe("dm:unread");
+    expect(initialMessage.payload.unreadCount).toBe(0);
+
+    const sendRes = await requestWithSession(
+      app,
+      "POST",
+      `/api/v1/dm/${conversation.id}/messages`,
+      cookie1,
+      { body: "Unread ping" },
+    );
+    expect(sendRes.status).toBe(201);
+
+    const unreadMessage = await ws.nextMessage();
+    expect(unreadMessage.type).toBe("dm:unread");
+    expect(unreadMessage.payload.unreadCount).toBe(1);
+
+    socket.close();
+  });
+});
+
+describe("WebSocket /api/v1/dm/:id", () => {
+  test("emits conversation messages to the authenticated participant", async () => {
+    const { cookie1, cookie2, conversation } = await createConversation();
+
+    const socket = app.connectWebSocket(`/api/v1/dm/${conversation.id}`, cookie2);
+    const ws = observeWebSocket<{
+      type: string;
+      payload: { body: string; conversationId: string };
+    }>(socket);
+    await waitForWebSocketOpen(socket);
+
+    const sendRes = await requestWithSession(
+      app,
+      "POST",
+      `/api/v1/dm/${conversation.id}/messages`,
+      cookie1,
+      { body: "Hello over ws" },
+    );
+    expect(sendRes.status).toBe(201);
+
+    const wsMessage = await ws.nextMessage();
+    expect(wsMessage.type).toBe("dm:conversation:message");
+    expect(wsMessage.payload.body).toBe("Hello over ws");
+    expect(wsMessage.payload.conversationId).toBe(conversation.id);
+
+    socket.close();
   });
 });
 

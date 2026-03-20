@@ -18,7 +18,7 @@ describe("static HTTP boundary behavior", () => {
   });
 
   test("path traversal attempt is blocked", async () => {
-    const res = await app.request("/../../../etc/passwd");
+    const res = await app.request("/%2e%2e/%2e%2e/%2e%2e/etc/passwd.css");
     expect(res.status).toBe(404);
   });
 });
